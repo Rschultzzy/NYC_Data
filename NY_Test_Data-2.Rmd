@@ -1,0 +1,212 @@
+---
+title: "Test"
+author: "R. Schultz"
+date: "2024-09-11"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+#Clear environment
+rm(list = ls())
+
+tinytex::install_tinytex(force = TRUE)
+# Load relevant packages
+install.packages(c("sf", "tigris"))
+library(tidyr)
+library(tidyverse)
+library(readxl)
+library(ggplot2)
+library(sf)
+library(tigris)
+```
+
+```{r}
+# Upload FCC Data
+NY_Broadband <- read_excel("C:/Users/rs136595/Downloads/NY_Broadband.xlsx", 
+    col_types = c("numeric", "numeric", "text", 
+        "text", "text", "text", "numeric", 
+        "text", "text", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric"))
+head(NY_Broadband) #Reduces FCC full data-set to 1,048,575 observations across 15 variables
+```
+
+```{r}
+NY <- NY_Broadband #Rename DF to something easier to recall
+options(scipen=999) #Change format of Census Block FIPS Code from Scientific notation
+head(NY) #View data to ensure changes look correct
+```
+
+```{r}
+#Count unique FIPS Blocks in our data and Unique Holding Company, Provider Name and DBA Name
+unique_count_FIPS <- length(unique(NY$`Census Block FIPS Code`)) 
+print(unique_count_FIPS)
+
+unique_count_Company <- length(unique(NY$`Holding Company Final`)) #Going to use Holding company final name going forward for grouping purposes (defining provider)
+print(unique_count_Company)
+
+unique_count_Provider <- length(unique(NY$`Provider Name`))
+print(unique_count_Provider)
+
+unique_count_DBA <- length(unique(NY$`DBA Name`))
+print(unique_count_DBA)
+
+unique_count_Type <-length(unique(NY$`Technology Code`)) #13 different ways of broadband transmission available
+print(unique_count_Type) #Understand the hierarchy of the providers speed and availability 
+```
+
+```{r}
+# Count Mean & Median number of providers by each FIPS Census Block 
+distinct_counts <- NY %>%
+  group_by(`Census Block FIPS Code`) %>%
+  summarise(Count = n_distinct(`Holding Company Final`))
+
+mean_count <-mean(distinct_counts$Count) #Each block has a mean of 2.98 providers available
+median_count <-median(distinct_counts$Count) #Each block has a median count of 3 avaialble providers
+
+print(mean_count)
+print(median_count)
+```
+
+```{r}
+# Count the distinct number of FIPS that have exactly the Mean Count and Median Count of providers available to choose from
+sum(distinct_counts$Count == mean_count) #Exactly 0 blocks have exactly 2.98 providers available. A block can't have .98 of a provider 
+sum(distinct_counts$Count == round(median_count, 1))
+table(distinct_counts$Count) #Roughly 96k Blocks have exactly 3 providers available to them
+```
+
+```{r}
+#Summary-max advertised downstream and upstream speed (mbps)
+summary(NY$`Max Advertised Downstream Speed (mbps)`)
+summary(NY$`Max Advertised Upstream Speed (mbps)`)
+```
+```{r}
+#Plot Max upload and Download stream 
+speed <- ggplot(NY, aes(x = `Max Advertised Downstream Speed (mbps)`, y = `Max Advertised Upstream Speed (mbps)`)) +
+  geom_jitter() + 
+  geom_smooth(method = "lm", se = FALSE)
+print(speed)
+```
+
+
+```{r}
+#Plot Max Advertised downstream speed x type of broadband way of distribution
+ggplot(NY, aes(`Max Advertised Downstream Speed (mbps)`,`Max Advertised Upstream Speed (mbps)`)) + 
+  geom_point() + 
+  facet_wrap(vars(`Technology Code`))
+```
+```{r}
+#Run an anova between Downstream and Upstream Speed
+result <- aov(`Max Advertised Downstream Speed (mbps)` ~ `Max Advertised Upstream Speed (mbps)`, data = NY)
+summary(result)
+
+#Analysis output supports that downstream speed has a real impact on the upstream speed
+```
+```{r}
+# Tabling consumer and business access by Downstream Speed - was not used in our analysis
+tbl1 <-table(NY$Consumer, NY$`Max Advertised Downstream Speed (mbps)`)
+tbl2 <-table(NY$Business, NY$`Max Advertised Downstream Speed (mbps)`)
+
+percent_tbl1 <-prop.table(tbl1)*100
+percent_tbl2 <-prop.table(tbl2)*100
+
+print(percent_tbl1)
+print(percent_tbl2)
+```
+
+```{r}
+#summarize mean value of advertised downstream speed by delivery method (Technology Code)
+summary_table <- NY %>%
+  group_by(`Technology Code`) %>%
+  summarize(
+    mean_value1 = mean(`Max Advertised Downstream Speed (mbps)`, na.rm = TRUE),
+    count = n()
+  ) #ascending by mean value - slowest and fastest 
+print(summary_table)
+```
+
+```{r}
+# Summarize mean value advertised downstream speed by each Census FIPS code
+summary_table2 <- NY %>%
+  group_by(`Census FIPS Code`) %>%
+  summarize(
+    mean_value1 = mean(`Max Advertised Downstream Speed (mbps)`, na.rm = TRUE),
+    median(distinct_counts$Count),
+    count = n()
+  )
+print(summary_table2)
+```
+
+```{r}
+#Plotting NY FIPS Data (5 digit code)
+state <- tigris::counties(state = 'New York', cb = TRUE, year = 2015)
+
+ggplot(data = state) +
+  geom_sf(aes(fill = GEOID)) +  # GEOID contains the FIPS codes
+  labs(title = " New York - FIPS Codes in State",
+       fill = "FIPS Code") +
+  theme_classic()
+```
+
+```{r}
+# Modify the 'Census Block FIPS' column to include only the first 5 numbers - matching FIPS data setup from Plot
+NY$`Census FIPS Code` <- substr(NY$`Census Block FIPS Code`, 1, 5)
+
+# Display modified data frame
+print("Modified Data Frame:")
+head(NY) 
+```
+```{r}
+# Count Mean & Median number of providers by each LARGER FIPS Census Block 
+distinct_counts2 <- NY %>%
+  group_by(`Census FIPS Code`) %>%
+  summarise(Count = n_distinct(`Holding Company Final`))
+
+mean_count <-mean(distinct_counts2$Count)
+median_count <-median(distinct_counts2$Count)
+
+print(mean_count) #breaking out by LARGER census blocks (not as narrowed) mean count of providers is 17 per block - with blocks 36063 and 36047 having 42 and 30 providers respectively
+print(median_count)
+```
+```{r}
+# Map out number of providers by each FIPS Census
+distinct_counts2 <- distinct_counts2 %>%
+  rename(GEOID = `Census FIPS Code`)
+
+state <-full_join(state, distinct_counts2, by = "GEOID")
+
+ggplot(data = state) +
+  geom_sf(aes(fill = Count)) +  # GEOID contains the FIPS codes
+  labs(title = " New York - Number of Providers at FIPS Level",
+       fill = "Mean Count of  Broadband Providers") +
+  scale_fill_viridis_c(option = "magma", begin = 0.1) +
+  theme_light()
+```
+
+```{r}
+# Map out download speed at each FIPS Census
+summary_table2 <- summary_table2 %>%
+  rename(GEOID = 'Census FIPS Code')
+
+state <-full_join(state, summary_table2, by = "GEOID")
+
+ggplot(data = state) +
+  geom_sf(aes(fill = mean_value1)) +  # GEOID contains the FIPS codes
+  labs(title = " New York - Mean Broadband Download Speeds at FIPS Level",
+       fill = "Mean Value of Download Speed (mbps)") +
+  scale_fill_viridis_c(option = "magma", begin = 0.1) +
+  theme_light()
+```
+
+```{r}
+#Run an anova between mean downstream speed and number of providers
+result2 <- aov(Count ~ mean_value1, data = state)
+summary(result2)
+```
+
+
+
+
+
